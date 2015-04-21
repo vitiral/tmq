@@ -16,6 +16,18 @@ class Pattern(tuple):
 class tsocket:
     '''The core socket class for Token Message Queue
 
+    Args:
+        context: the context manager for this socket. Get a context with
+            tmq.tmq_init() function
+        type (int): the socket type to use. Use a constant from the socket
+            module. Default is socket.AF_INET
+        role (int): the role this socket plays for the network
+
+            Options are:
+                tmq_TMQ_CLIENT, tmq.TMQ_BROKER or tmq.TMQ_BRIDGE
+
+            The operation of the socket depends on the role type selected.
+
     Notes:
         - Intended to mimick future C implementation as much as possible
         - Future implementation will have socket_methods pointer
@@ -25,8 +37,12 @@ class tsocket:
         - Each of these functions can take the pointer given by
             tsocket.socket() and communicate with it
     '''
-    def __init__(self, context, type):
-        self.type = type
+    def __init__(self, context, role=td.TMQ_CLIENT,
+                 socket_constructor=socket.socket):
+        if role not in {td.TMQ_CLIENT, td.TMQ_BROKER, td.TMQ_BRIDGE}:
+            raise TypeError(role)
+        self.role = role
+        self._socket_constructor = socket_constructor
         self.context = context
         self.listener = None
         self._broker = None
@@ -36,7 +52,7 @@ class tsocket:
 
     def socket(self):
         '''create a new standard socket of the same type'''
-        return socket.socket()
+        return self._socket_constructor()
 
     @property
     def broker(self):
@@ -57,8 +73,8 @@ class tsocket:
         except Exception as E: pass
 
 
-def tmq_socket(context, type):
-    return tsocket(context, type)
+def tmq_socket(context, role=td.TMQ_CLIENT, socket_constructor=socket.socket):
+    return tsocket(context, role, socket_constructor)
 
 
 def tmq_send(tsocket, pattern, data):
@@ -112,7 +128,7 @@ def tmq_broker(tsocket, endpoint):
 
 def tmq_subscribe(tsocket, pattern):
     with closing(tsocket.socket()) as s:
-        s.connect(socket.broker)
+        s.connect(tsocket.broker)
         s.send(td.tmq_pack(
             td.TMQ_SUB | td.TMQ_CACHE | td.TMQ_BROKER, pattern))
     tsocket.received[pattern] = deque()

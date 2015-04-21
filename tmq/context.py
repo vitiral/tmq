@@ -12,22 +12,6 @@ class Context:
         self._thread = Thread(target=self.thread_process)
         self._thread.start()
 
-    @staticmethod
-    def process_socket(socket):
-        # accept and process connections until they are done
-        while True:
-            try:
-                conn, addr = socket.accept()
-            except BlockingIOError:
-                return
-
-            data = conn.recv(td.TMQ_MSG_LEN)
-            data = td.tmq_unpack(data)
-            type, pattern, data = data
-            assert type == td.TMQ_SUB
-            print("Sub:", pattern, data)
-            yield pattern, data
-
     def thread_process(self):
         while True:
             start = time()
@@ -48,3 +32,31 @@ class Context:
 
     def remove_socket(self, socket):
         self._remove.appendleft(socket)
+
+    @staticmethod
+    def process_socket(socket):
+        # accept and process connections until they are done
+        while True:
+            if socket.role == td.TMQ_BROKER:
+                yield from Context._process_broker(socket)
+            else:   # client
+                yield from Context._process_client(socket)
+
+    @staticmethod
+    def _process_client(socket):
+        while True:
+            try:
+                conn, addr = socket.listener.accept()
+            except BlockingIOError:
+                return
+
+            data = conn.recv(td.TMQ_MSG_LEN)
+            data = td.tmq_unpack(data)
+            type, pattern, data = data
+            assert type == td.TMQ_SUB
+            print("Sub:", pattern, data)
+            yield pattern, data
+
+    @staticmethod
+    def _process_broker(socket):
+        return

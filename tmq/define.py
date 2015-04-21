@@ -1,3 +1,4 @@
+import socket
 from enum import Enum
 from operator import xor
 import struct
@@ -7,11 +8,6 @@ TMQ_MSG_LEN = 2056
 
 # Flags
 TMQ_DONTWAIT        = 0x01
-
-# there can be up to 255 defined socket types
-class SOCKET_TYPES(Enum):
-    TCP_IP4 = 1
-    TCP_IP6 = 2
 
 '''
 Each packet is consructed as:
@@ -33,14 +29,18 @@ type                                | Result
 (TMQ_SUB|TMQ_CACHE|TMQ_REMOVE)      | Remove token:end from client cache of subs
 '''
 
+# Command Types
 TMQ_PUB             = 0x01      # Publisher type
 TMQ_SUB             = 0x02      # Subscriber type
 TMQ_CACHE           = 0x04      # call to update jkjthe cache
 TMQ_REMOVE          = 0x08      # remove command
 TMQ_                = 0x10
-TMQ_BROKER          = 0x20      # Broker type
-TMQ_BRIDGE          = 0x40      # Bridge type
-TMQ_ANY             = 0x80      # pub/sub to ANY or ALL
+TMQ_                = 0x20
+
+# Role Types
+TMQ_CLIENT          = 0x00      # Client role
+TMQ_BROKER          = 0x40      # Broker role
+TMQ_BRIDGE          = 0x80      # Bridge role
 
 
 def tmq_hash(value):
@@ -90,29 +90,24 @@ def tmq_pack_address_t(address, port):
     they wish. It is intended that address point to a area network location
     and port be a local location in the machine
     '''
-    sfmt = '>BH{}H'
+    sfmt = '>HH{}H'
     if isinstance(address, str):
         address = address.split('.')
     address = tuple(int(a) for a in address)
     if len(address) == 4:
-        atype = SOCKET_TYPES.TCP_IP4.value
-    elif len(address) == 8:
-        atype = SOCKET_TYPES.TCP_IP6.value
-    else:
-        raise ValueError(len(address))
+        atype = socket.AF_INET
+    else: raise ValueError(len(address))
     return struct.pack(sfmt.format(len(address)), atype, port,
                        *address)
 
 
 def tmq_unpack_address_t(packed_addr):
-    atype, port = struct.unpack('>BH', packed_addr[:3])
-    if atype == SOCKET_TYPES.TCP_IP4.value:
+    atype, port = struct.unpack('>HH', packed_addr[:4])
+    if atype == socket.AF_INET:
         alen = 4
-    elif atype == SOCKET_TYPES.TCP_IP6.value:
-        alen = 8
     else: raise ValueError(atype)
-    return ((struct.unpack('>{}H'.format(alen), packed_addr[3:3 + 2 * alen]),
-             port), 3 + 2 * alen)
+    return ((struct.unpack('>{}H'.format(alen), packed_addr[4:4 + 2 * alen]),
+             port), 4 + 2 * alen)
 
 
 def tmq_pack_addresses(packed_addresses):
@@ -127,12 +122,3 @@ def tmq_unpack_addresses(packed_addresses):
         addresses.append(addr)
         i += l
     return addresses
-
-if __name__ == '__main__':
-    original = 8, (8034342, 3, 4), b'hello'
-    packed = tmq_pack(*original)
-    unpacked = tmq_unpack(packed)
-    print(unpacked)
-    assert(original == unpacked)
-
-
