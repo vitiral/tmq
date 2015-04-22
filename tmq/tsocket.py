@@ -2,15 +2,8 @@ from time import time, sleep
 from threading import Thread
 import socket
 from collections import deque
-from contextlib import closing
 
 from tmq import define as td
-
-
-class Pattern(tuple):
-    '''In python pattern is just a tuple. In C, this stores the hash
-    information as well'''
-    pass
 
 
 class tsocket:
@@ -77,16 +70,54 @@ def tmq_socket(context, role=td.TMQ_CLIENT, socket_constructor=socket.socket):
     return tsocket(context, role, socket_constructor)
 
 
-def tmq_send(tsocket, pattern, data):
-    '''Publish data to subscribers of pattern'''
-    if not isinstance(pattern, Pattern):
-        pattern = Pattern(pattern)
-    endpoints = tmq_endpoints(tsocket, pattern)
+def tmq_subscribe(tsocket, pattern):
+    if pattern in tsocket.received:
+        raise ValueError("Subscribing to {} twice".format(pattern))
+    s = tsocket.socket()
+    try:
+        s.connect(tsocket.broker)
+        s.send(td.tmq_pack(
+            td.TMQ_SUB | td.TMQ_CACHE | td.TMQ_BROKER, pattern,
+            td.tmq_pack_address_t(*tsocket.listener.getsockname())))
+    finally: s.close()
+    tsocket.received[pattern] = deque()
+
+
+def tmq_publish(tsocket, pattern):
+    '''Inform the broker we are a publisher and ask for subscribers'''
+    if not isinstance(pattern, td.pattern):
+        pattern = td.pattern(*pattern)
+    if pattern not in tsocket.subscribers:
+        # inform broker we are a publisher
+        s = tsocket.socket()
+        try:
+            s.connect(tsocket.broker)
+            s.send(td.tmq_pack(
+                td.TMQ_PUB | td.TMQ_CACHE | td.TMQ_BROKER, pattern,
+                td.tmq_pack_address_t(*tsocket.listener.getsockname())))
+        finally: s.close()
+        tsocket.subscribers[pattern] = set()
+
+
+def tmq_send(tsocket, pattern, data, flags=0):
+    '''Publish data to subscribers of pattern.
+    Block until there are endpoints available from the server'''
+    if not isinstance(pattern, td.pattern):
+        pattern = td.pattern(*pattern)
+    if pattern not in tsocket.subscribers:
+        raise ValueError("Pattern not marked as a publish pattern: {}".format(
+            pattern))
+    endpoints = tsocket.subscribers[pattern]
+    if not endpoints:
+        return 1
     packet = td.tmq_pack(td.TMQ_SUB, pattern, data)
     for addr in endpoints:
-        with closing(tsocket.socket()) as s:
+        s = tsocket.socket()
+        try:
             s.connect(addr)
             s.send(packet)
+        finally: s.close()
+    return 1
 
 
 def tmq_recv(tsocket, pattern):
@@ -126,27 +157,3 @@ def tmq_broker(tsocket, endpoint):
     tsocket._broker = endpoint
 
 
-def tmq_subscribe(tsocket, pattern):
-    with closing(tsocket.socket()) as s:
-        s.connect(tsocket.broker)
-        s.send(td.tmq_pack(
-            td.TMQ_SUB | td.TMQ_CACHE | td.TMQ_BROKER, pattern))
-    tsocket.received[pattern] = deque()
-
-
-################################################################################
-## Internal Functions
-
-def tmq_endpoints(tsocket, pattern):
-    '''Get the endpoints (subscribers) associated with pattern'''
-    if pattern not in tsocket.subscribers:
-        # retrieve the subscribers from broker
-        with closing(tsocket.socket()) as s:
-            s.connect(tsocket.broker)
-            s.send(td.tmq_pack(
-                td.TMQ_PUB | td.TMQ_CACHE | td.TMQ_BROKER, pattern))
-            type, t, addresses = td.tmq_unpack(s.recv())
-        assert type == td.TMQ_SUB | td.TMQ_CACHE
-        assert pattern == t
-        tsocket.subscribers[pattern] = td.tmq_unpack_addresses(addresses)
-    return tsocket.subscribers[pattern]

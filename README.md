@@ -38,6 +38,18 @@ using tokens instead of string matching.
 
 ## Operations
 
+### Client Nodes
+clients are able to send (publish) data, and also receieve(subscribe). In addition,
+all clients must be bound to an address as a “listener” to receive instructions
+from the broker -- even if they are only publishing data.
+
+They mark that they publish/subscribe through `tmq_publish` and `tmq_subscribe`
+routines.
+
+Internally, these send a packet to the broker, letting it know that they are a
+publisher/subscriber. The broker eventually sends all addresses that it has
+back to them.
+
 ### TMQ packets
 tmq packets are lightweight, containing only:
 - the packet type (1 byte)

@@ -5,6 +5,7 @@ import struct
 
 HEADER_BYTES = 4
 TMQ_MSG_LEN = 2056
+TMQ_LOOP_TIME = 5e-3
 
 # Flags
 TMQ_DONTWAIT        = 0x01
@@ -42,6 +43,20 @@ TMQ_CLIENT          = 0x00      # Client role
 TMQ_BROKER          = 0x40      # Broker role
 TMQ_BRIDGE          = 0x80      # Bridge role
 
+
+class pattern(tuple):
+    '''Pattern for publishing / subcribing.
+    Automatically converts strings to hash'''
+    def __new__(cls, *args):
+        tokens = tuple(t if isinstance(t, int) else
+                       tmq_hash(t) if isinstance(t, (str, bytes, bytearray))
+                       else None for t in args)
+        if min(tokens) < 0:
+            raise ValueError("tokens can not be < 0")
+        if max(tokens) > 0xFFFFFFFF:
+            raise ValueError("tokens can not be > max 32 bit integer")
+        cls = tuple.__new__(cls, tokens)
+        return cls
 
 def tmq_hash(value):
     '''Standard hasing function to generate a token from a string'''
@@ -90,15 +105,16 @@ def tmq_pack_address_t(address, port):
     they wish. It is intended that address point to a area network location
     and port be a local location in the machine
     '''
-    sfmt = '>HH{}H'
+    sfmt = '>HH{}B'
     if isinstance(address, str):
         address = address.split('.')
     address = tuple(int(a) for a in address)
     if len(address) == 4:
-        atype = socket.AF_INET
+        atype = (socket.AF_INET)
     else: raise ValueError(len(address))
-    return struct.pack(sfmt.format(len(address)), atype, port,
+    out = struct.pack(sfmt.format(len(address)), atype, port,
                        *address)
+    return out
 
 
 def tmq_unpack_address_t(packed_addr):
@@ -106,8 +122,9 @@ def tmq_unpack_address_t(packed_addr):
     if atype == socket.AF_INET:
         alen = 4
     else: raise ValueError(atype)
-    return ((struct.unpack('>{}H'.format(alen), packed_addr[4:4 + 2 * alen]),
-             port), 4 + 2 * alen)
+    addr = struct.unpack('>{}B'.format(alen), packed_addr[4:4 + alen])
+    return (('.'.join(str(n) for n in addr), port),
+            4 + alen)
 
 
 def tmq_pack_addresses(packed_addresses):

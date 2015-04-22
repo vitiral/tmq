@@ -4,7 +4,6 @@ import tmq.define as td
 
 class Context:
     '''The core handler for sockets. Does the asyncio loop'''
-    LOOP_TIME = 5e-3
     def __init__(self, broker):
         self._broker = broker
         self.sockets = []
@@ -21,12 +20,11 @@ class Context:
 
             for s in self.sockets:
                 if s.context is None: continue  # socket was closed
-                for pattern, data in self.process_socket(s):
-                    s.received[pattern] = data
+                self.process_socket(s)
 
             start = time() - start
             try:
-                sleep(self.LOOP_TIME - start)
+                sleep(td.TMQ_LOOP_TIME - start)
             except ValueError:
                 pass
 
@@ -38,9 +36,9 @@ class Context:
         # accept and process connections until they are done
         while True:
             if socket.role == td.TMQ_BROKER:
-                yield from Context._process_broker(socket)
-            else:   # client
-                yield from Context._process_client(socket)
+                return Context._process_broker(socket)
+            else:
+                return Context._process_client(socket)
 
     @staticmethod
     def _process_client(socket):
@@ -53,9 +51,17 @@ class Context:
             data = conn.recv(td.TMQ_MSG_LEN)
             data = td.tmq_unpack(data)
             type, pattern, data = data
-            assert type == td.TMQ_SUB
-            print("Sub:", pattern, data)
-            yield pattern, data
+            if type == td.TMQ_SUB:
+                socket.received[pattern] = data
+            elif type == (td.TMQ_PUB | td.TMQ_CACHE):
+                if pattern not in socket.subscribers: raise KeyError
+                socket.subscribers[pattern] = socket.subscribers.union(
+                    td.tmq_unpack_addresses(data))
+            elif type == td.TMQ_PUB | td.TMQ_CACHE | td.TMQ_REMOVE:
+                if pattern not in socket.subscribers: raise KeyError
+                socket.subscribers[pattern] = socket.subscribers.difference(
+                    td.tmq_unpack_addresses(data))
+            else: assert(0)
 
     @staticmethod
     def _process_broker(socket):

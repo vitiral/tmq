@@ -7,10 +7,7 @@ from tmq import define as td
 from tmq.tsocket import *
 from tmq.context import Context
 
-from .tools import mock_context, mock_socket, close_all
-
-ip = 'localhost'
-ports = range(9000, 9200)
+from .tools import *
 
 
 class TestSocket(TestCase):
@@ -74,9 +71,10 @@ class TestSocket(TestCase):
         pub.subscribers[pattern] = [addr]
         tmq_send(pub, pattern, expected)
 
-        result_p, result = next(Context.process_socket(sub))
+        Context.process_socket(sub)
+        result = sub.received[pattern]
 
-        self.assertEqual(result_p, pattern)
         self.assertEqual(result, expected)
 
         close_all(pub, sub)
+

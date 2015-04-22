@@ -1,3 +1,4 @@
+import socket
 from unittest import TestCase
 
 from tmq import define as td
@@ -26,14 +27,12 @@ class TestAddresses(TestCase):
         address = ('127.0.0.1', 42)
         packed = td.tmq_pack_address_t(*address)
         result, *_ = td.tmq_unpack_address_t(packed)
-        expected = tuple(int(a) for a in address[0].split('.')), address[1]
-        self.assertEqual(result, expected)
+        self.assertEqual(result, address)
 
     def test_pack_unpack_several(self):
-        addresses = [((127, 0, 0, 1), 42),
-                     ((127, 0, 0, 1), 142),
-                     ((192, 142, 0, 1), 67),
-                     ((8, 8, 8, 8), 80),
+        addresses = [('8.8.8.8', 80),
+                     ('127.0.0.1', 142),
+                     ('192.142.0.1', 67)
                      ]
         packed = td.tmq_pack_addresses(addresses)
         result = td.tmq_unpack_addresses(packed)
