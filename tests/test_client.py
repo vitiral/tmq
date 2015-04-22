@@ -71,7 +71,7 @@ class TestSocket(TestCase):
         pub.subscribed[pattern] = [addr]
         tmq_send(pub, pattern, expected)
 
-        Context.process_socket(sub)
+        Context.process_tsocket(sub)
         result = sub.published[pattern].pop()
 
         self.assertEqual(result, expected)

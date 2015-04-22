@@ -39,9 +39,10 @@ class tsocket:
         self.context = context
         self.listener = None
         self._broker = None
-        self.published = {}
-        self.subscribed = {}
-        self.context.sockets.append(self)
+        self.published = {}  # client=published data. broker=publishers
+        self.subscribed = {}  # subscribers
+        self.context.tsockets.append(self)
+        self.queue = deque  # queue of things to do
 
     def socket(self):
         '''create a new standard socket of the same type'''
@@ -53,7 +54,7 @@ class tsocket:
 
     def close(self):
         '''Close the socket. Can still retrieve data already receieved'''
-        self.context.remove_socket(self)
+        self.context.remove_tsocket(self)
         if self.listener:
             self.listener.close()
         self.listener = None

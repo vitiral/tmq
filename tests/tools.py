@@ -9,7 +9,7 @@ ports = range(9000, 9200)
 
 def mock_context():
     m = MagicMock(spec=Context)
-    m.sockets = []
+    m.tsockets = []
     return m
 
 
