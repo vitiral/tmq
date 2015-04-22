@@ -84,7 +84,7 @@ class Context:
     def _new_publisher(tsocket, pattern, data):
         if pattern not in tsocket.published:
             tsocket.published[pattern] = set()
-        pub_addr = td.tmq_unpack_address_t(data)
+        pub_addr = td.tmq_unpack_addresses(data)[0]
         tsocket.published[pattern].add(pub_addr)
 
         # send current subscribers of that token to the new publisher
@@ -101,8 +101,11 @@ class Context:
     def _new_subscriber(tsocket, pattern, data):
         if pattern not in tsocket.subscribed:
             tsocket.subscribed[pattern] = set()
-        addr = td.tmq_unpack_address_t(data)
+        addr = td.tmq_unpack_addresses(data)[0]
         tsocket.subscribed[pattern].add(addr)
+
+        if pattern not in tsocket.published:
+            return  # no publishers for that subscriber (yet)
 
         # send out subscriber to all publishers of that token
         # TODO: also send out for subsets of the token
