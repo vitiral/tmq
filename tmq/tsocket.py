@@ -39,8 +39,8 @@ class tsocket:
         self.context = context
         self.listener = None
         self._broker = None
-        self.received = {}
-        self.subscribers = {}
+        self.published = {}
+        self.subscribed = {}
         self.context.sockets.append(self)
 
     def socket(self):
@@ -58,7 +58,7 @@ class tsocket:
             self.listener.close()
         self.listener = None
         self._broker = None
-        self.subscribers = None
+        self.subscribed = None
         self.context = None
 
     def __del__(self):
@@ -71,7 +71,7 @@ def tmq_socket(context, role=td.TMQ_CLIENT, socket_constructor=socket.socket):
 
 
 def tmq_subscribe(tsocket, pattern):
-    if pattern in tsocket.received:
+    if pattern in tsocket.published:
         raise ValueError("Subscribing to {} twice".format(pattern))
     s = tsocket.socket()
     try:
@@ -80,14 +80,14 @@ def tmq_subscribe(tsocket, pattern):
             td.TMQ_SUB | td.TMQ_CACHE | td.TMQ_BROKER, pattern,
             td.tmq_pack_address_t(*tsocket.listener.getsockname())))
     finally: s.close()
-    tsocket.received[pattern] = deque()
+    tsocket.published[pattern] = deque()
 
 
 def tmq_publish(tsocket, pattern):
     '''Inform the broker we are a publisher and ask for subscribers'''
     if not isinstance(pattern, td.pattern):
         pattern = td.pattern(*pattern)
-    if pattern not in tsocket.subscribers:
+    if pattern not in tsocket.subscribed:
         # inform broker we are a publisher
         s = tsocket.socket()
         try:
@@ -96,7 +96,7 @@ def tmq_publish(tsocket, pattern):
                 td.TMQ_PUB | td.TMQ_CACHE | td.TMQ_BROKER, pattern,
                 td.tmq_pack_address_t(*tsocket.listener.getsockname())))
         finally: s.close()
-        tsocket.subscribers[pattern] = set()
+        tsocket.subscribed[pattern] = set()
 
 
 def tmq_send(tsocket, pattern, data, flags=0):
@@ -104,10 +104,10 @@ def tmq_send(tsocket, pattern, data, flags=0):
     Block until there are endpoints available from the server'''
     if not isinstance(pattern, td.pattern):
         pattern = td.pattern(*pattern)
-    if pattern not in tsocket.subscribers:
+    if pattern not in tsocket.subscribed:
         raise ValueError("Pattern not marked as a publish pattern: {}".format(
             pattern))
-    endpoints = tsocket.subscribers[pattern]
+    endpoints = tsocket.subscribed[pattern]
     if not endpoints:
         return 1
     packet = td.tmq_pack(td.TMQ_SUB, pattern, data)
@@ -128,7 +128,7 @@ def tmq_recv(tsocket, pattern):
 
         If there is no data, None is returned
     '''
-    queue = tsocket.received[pattern]
+    queue = tsocket.published[pattern]
     if queue:
         return queue.pop()
     else:

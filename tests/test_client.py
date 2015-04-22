@@ -23,7 +23,7 @@ class TestSocket(TestCase):
         # "publish" the data
         context = mock_context()
         ts = tmq_socket(context, 0)
-        ts.subscribers[pattern] = [addr]
+        ts.subscribed[pattern] = [addr]
         tmq_send(ts, pattern, expected)
 
         # make sure it is correct for the subscriber
@@ -68,11 +68,11 @@ class TestSocket(TestCase):
         # "publish" the data
         context = mock_context()
         pub = tmq_socket(context, 0)
-        pub.subscribers[pattern] = [addr]
+        pub.subscribed[pattern] = [addr]
         tmq_send(pub, pattern, expected)
 
         Context.process_socket(sub)
-        result = sub.received[pattern]
+        result = sub.published[pattern].pop()
 
         self.assertEqual(result, expected)
 

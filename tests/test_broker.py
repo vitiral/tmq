@@ -49,6 +49,22 @@ class TestBroker(TestCase):
         self.assertEqual(addr, addr_pub)
 
         # send back subscriber addresses to publisher
-        sub_addr_packed = td.tmq_pack_address_t(*addr_sub)
+        packed = td.tmq_pack(td.TMQ_PUB | td.TMQ_CACHE, pattern,
+                             td.tmq_pack_address_t(*addr_sub))
+        s = socket.socket()
+        s.connect(addr_pub)
+        s.send(packed)
+        s.close();
+
+        # receive addresses
+        Context.process_socket(pub)
+        self.assertSetEqual(pub.subscribed[pattern], set((addr_sub,)))
+
+        # now send some data, no more broker necessary!
+        tmq_send(pub, pattern, data)
+        Context.process_socket(sub)
+        result = tmq_recv(sub, pattern)
+
+        self.assertEqual(data, result)
 
         close_all(pub, sub, broker)

@@ -34,11 +34,10 @@ class Context:
     @staticmethod
     def process_socket(socket):
         # accept and process connections until they are done
-        while True:
-            if socket.role == td.TMQ_BROKER:
-                return Context._process_broker(socket)
-            else:
-                return Context._process_client(socket)
+        if socket.role == td.TMQ_BROKER:
+            return Context._process_broker(socket)
+        else:
+            return Context._process_client(socket)
 
     @staticmethod
     def _process_client(socket):
@@ -52,17 +51,31 @@ class Context:
             data = td.tmq_unpack(data)
             type, pattern, data = data
             if type == td.TMQ_SUB:
-                socket.received[pattern] = data
+                socket.published[pattern].appendleft(data)
             elif type == (td.TMQ_PUB | td.TMQ_CACHE):
-                if pattern not in socket.subscribers: raise KeyError
-                socket.subscribers[pattern] = socket.subscribers.union(
-                    td.tmq_unpack_addresses(data))
+                if pattern not in socket.subscribed: raise KeyError
+                socket.subscribed[pattern] = socket.subscribed[pattern].\
+                    union(td.tmq_unpack_addresses(data))
             elif type == td.TMQ_PUB | td.TMQ_CACHE | td.TMQ_REMOVE:
-                if pattern not in socket.subscribers: raise KeyError
-                socket.subscribers[pattern] = socket.subscribers.difference(
-                    td.tmq_unpack_addresses(data))
+                if pattern not in socket.subscribed: raise KeyError
+                socket.subscribed[pattern] = socket.subscribed[pattern].\
+                    difference(td.tmq_unpack_addresses(data))
             else: assert(0)
 
     @staticmethod
     def _process_broker(socket):
-        return
+        while True:
+            # TODO: process things that need to be sent out
+
+            try:
+                conn, addr = socket.listener.accept()
+            except BlockingIOError:
+                return
+
+            data = conn.recv(td.TMQ_MSG_LEN)
+            data = td.tmq_unpack(data)
+            type, pattern, data = data
+            if type == td.TMQ_SUB | td.TMQ_CACHE | td.TMQ_BROKER:
+                pass
+            if type == td.TMQ_PUB | td.TMQ_CACHE | td.TMQ_BROKER:
+                pass
