@@ -7,7 +7,7 @@ socket types, such as TCP. It is similar to protocols such as ZMQ, except that
 it is specifically written to be embeddable. This adds a few limitations, but
 still allows for a lot of growth
 
-This is the python implementation of tmq specifically designed to be run on
+This is the python implementation of TMQ specifically designed to be run on
 [micropython](http://micropython.org/) or any other python distribution. So when
 the example above says “embedded” it isn’t kidding! This library can be embedded
 in a microcontroller.
@@ -31,7 +31,7 @@ from tmq import *
 
 # setup addresses
 broker_addr = ‘42.42.0.42’, 9942
-myaddr = ‘42.42.0.1’, 9943
+myaddr = ‘42.42.0.43’, 9943
 
 # create the socket
 context = tmq_init()
@@ -63,7 +63,7 @@ from tmq import *
 
 # setup addresses
 broker_addr = ‘42.42.0.42’, 9942
-myaddr = ‘42.42.0.1’, 9944
+myaddr = ‘42.42.0.44’, 9943
 
 # create the socket
 context = tmq_init()
