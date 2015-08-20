@@ -8,6 +8,16 @@ ip = '127.0.0.1'
 ports = range(9000, 9200)
 
 
+class MockContext(Context):
+    '''Context without the loop (test should do all the work directy)'''
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.event_loop.set_debug(True)
+
+    @asyncio.coroutine
+    def _loop(self):
+        return
+
 def mock_context():
     m = MagicMock(spec=Context)
     m.tsockets = []

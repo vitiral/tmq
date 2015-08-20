@@ -17,7 +17,7 @@ class Context:
         self.subscribers = {}
         self.failures = []
         task = self.event_loop.create_task(self._loop())
-        task.add_done_callback(self._task_callback)
+        self.add_done_callback(task)
 
     def remove_tsocket(self, tsocket):
         self.tsockets.remove(tsocket)
@@ -103,7 +103,7 @@ class Context:
             t = self.event_loop.create_task(self._new_publisher(pattern, data))
         else:
             raise TypeError
-        t.add_done_callback(self._task_callback)
+        self.add_done_callback(t)
 
     @asyncio.coroutine
     def _new_publisher(self, pattern, data):
@@ -142,7 +142,10 @@ class Context:
                 yield from self.event_loop.sock_send_all(s, packet)
             finally: s.close()
 
-    def _task_callback(future):
+    def add_done_callback(self, task):
+        task.add_done_callback(self._task_callback)
+
+    def _task_callback(self, future):
         '''If a task fails, it is added to failures to be raised
         later'''
         if future.exception():

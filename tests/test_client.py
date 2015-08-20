@@ -21,8 +21,7 @@ class TestSocket(TestCase):
         s.listen(5)
 
         # "publish" the data
-        context = Context(None)
-        context.event_loop.set_debug(True)
+        context = MockContext(None)
         ts = tmq_socket(context, 0)
         tmq_bind(ts, (ip, ports[1]))
         ts.subscribed[pattern] = [addr]
@@ -47,8 +46,7 @@ class TestSocket(TestCase):
         mocked_socket = mock_socket()
 
         # create subscriber and subscribe to pattern
-        context = Context(None)
-        context.event_loop.set_debug(True)
+        context = MockContext(None)
         sub = tmq_socket(context, 0)
         tmq_bind(sub, addr)
         self.assertTrue(sub.listener)
