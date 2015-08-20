@@ -33,13 +33,14 @@ type                                | Result
 # Command Types
 TMQ_PUB             = 0x01      # Publisher type
 TMQ_SUB             = 0x02      # Subscriber type
-TMQ_CACHE           = 0x04      # call to update jkjthe cache
-TMQ_REMOVE          = 0x08      # remove command
-TMQ_                = 0x10
-TMQ_                = 0x20
+TMQ_CACHE           = 0x04      # call to update the cache
+TMQ_REMOVE          = 0x08      # remove command  # TODO: make COMMAND not REMOVE, data will determine command
+TMQ_                = 0x10      # RESERVED (usocket is always 0)
+TMQ_                = 0x20      # RESERVED (usocket is always 0)
 
 # Role Types
-TMQ_CLIENT          = 0x00      # Client role
+TMQ_CLIENT          = 0x00      # Client role  # TODO make reserved (usocket is always 0)
+#                     0x20      # TODO: make client role
 TMQ_BROKER          = 0x40      # Broker role
 TMQ_BRIDGE          = 0x80      # Bridge role
 
@@ -95,7 +96,7 @@ def tmq_unpack(data):
     return type, tokens, data
 
 
-def tmq_pack_address_t(address, port):
+def tmq_pack_address_t(address, port):  # TODO: add type
     '''The socket data type is packed as follows:
 
     bytes: 1            | 2     | addr_len |
