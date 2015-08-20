@@ -76,12 +76,18 @@ def tmq_socket(context, role=td.TMQ_CLIENT, socket_constructor=socket.socket):
 
 
 def tmq_subscribe(tsocket, pattern):
+    return tsocket.context.event_loop.run_until_complete(
+        tmq_subscribe_async(tsocket, pattern))
+
+@asyncio.coroutine
+def tmq_subscribe_async(tsocket, pattern):
     if pattern in tsocket.published:
         raise ValueError("Subscribing to {} twice".format(pattern))
+    eloop = tsocket.context.event_loop
     s = tsocket.socket()
     try:
-        s.connect(tsocket.broker)
-        s.send(td.tmq_pack(
+        yield from eloop.sock_connect(s, tsocket.broker)
+        yield from eloop.sock_sendall(s, td.tmq_pack(
             td.TMQ_SUB | td.TMQ_CACHE | td.TMQ_BROKER, pattern,
             td.tmq_pack_address_t(*tsocket.listener.getsockname())))
     finally: s.close()
@@ -89,19 +95,27 @@ def tmq_subscribe(tsocket, pattern):
 
 
 def tmq_publish(tsocket, pattern):
+    return tsocket.context.event_loop.run_until_complete(
+        tmq_publish_async(tsocket, pattern))
+
+
+@asyncio.coroutine
+def tmq_publish_async(tsocket, pattern):
     '''Inform the broker we are a publisher and ask for subscribers'''
     if not isinstance(pattern, td.pattern):
         pattern = td.pattern(*pattern)
     if pattern not in tsocket.subscribed:
         # inform broker we are a publisher
+        eloop = tsocket.context.event_loop
         s = tsocket.socket()
         try:
-            s.connect(tsocket.broker)
-            s.send(td.tmq_pack(
+            yield from eloop.sock_connect(s, tsocket.broker)
+            yield from eloop.sock_sendall(s, td.tmq_pack(
                 td.TMQ_PUB | td.TMQ_CACHE | td.TMQ_BROKER, pattern,
                 td.tmq_pack_address_t(*tsocket.listener.getsockname())))
         finally: s.close()
         tsocket.subscribed[pattern] = set()
+
 
 def tmq_send(tsocket, pattern, data, flags=0):
     tsocket.context.event_loop.run_until_complete(

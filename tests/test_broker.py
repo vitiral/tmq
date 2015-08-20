@@ -6,6 +6,7 @@ from operator import attrgetter
 from tmq import define as td
 from tmq.tsocket import *
 from tmq.context import Context
+from tmq.utils import run_tasks
 
 from .tools import *
 
@@ -24,7 +25,7 @@ class TestBroker(TestCase):
         broker.bind(addr_broker)
         broker.listen(5)
 
-        context = mock_context()
+        context = MockContext(None)
         pub = tmq_socket(context)
         sub = tmq_socket(context)
 
@@ -54,15 +55,16 @@ class TestBroker(TestCase):
         s = socket.socket()
         s.connect(addr_pub)
         s.send(packed)
-        s.close();
+        s.close()
 
         # receive addresses
-        Context.process_tsocket(pub)
+        eloop = context.event_loop
+        run_tasks(context._process_tsocket(pub))
         self.assertSetEqual(pub.subscribed[pattern], set((addr_sub,)))
 
         # now send some data, no more broker necessary!
         tmq_send(pub, pattern, data)
-        Context.process_tsocket(sub)
+        run_tasks(context._process_tsocket(sub))
         result = tmq_recv(sub, pattern)
 
         self.assertEqual(data, result)
@@ -78,10 +80,11 @@ class TestBroker(TestCase):
         addr_sub = ip, ports[1]
         addr_broker = ip, ports[2]
 
-        context = mock_context()
-        broker =    tmq_socket(context, td.TMQ_BROKER)
-        pub =       tmq_socket(context)
-        sub =       tmq_socket(context)
+        context = MockContext(None)
+        broker = tmq_socket(context, td.TMQ_BROKER)
+        pub = tmq_socket(context)
+        sub = tmq_socket(context)
+        eloop = context.event_loop
 
         tmq_bind(broker, addr_broker)
         tmq_bind(pub, addr_pub)
@@ -92,15 +95,16 @@ class TestBroker(TestCase):
 
         # subscribe
         tmq_subscribe(sub, pattern)
-        Context.process_tsocket(broker)
+        run_tasks(eloop, context._process_tsocket(broker))
         self.assertEqual(broker.subscribed[pattern], set((addr_sub,)))
 
         # publish
         tmq_publish(pub, pattern)
-        Context.process_tsocket(broker)
+        run_tasks(eloop, context._process_tsocket(broker))
         self.assertEqual(broker.published[pattern], set((addr_pub,)))
-        Context.process_tsocket(pub)
+        run_tasks(eloop, context._process_tsocket(broker))
         self.assertEqual(pub.subscribed[pattern], set((addr_sub,)))
+        return
 
         # publish data
         tmq_send(pub, pattern, data)
