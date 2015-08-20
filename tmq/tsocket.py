@@ -1,7 +1,6 @@
-from time import time, sleep
-from threading import Thread
 import socket
 from collections import deque
+import asyncio
 
 from tmq import define as td
 
@@ -39,14 +38,15 @@ class tsocket:
         self.context = context
         self.listener = None
         self._broker = None
-        self.published = {}  # client=published data. broker=publishers
+        self.published = {}  # published data
         self.subscribed = {}  # subscribers
         self.context.tsockets.append(self)
-        self.queue = deque  # queue of things to do
 
     def socket(self):
         '''create a new standard socket of the same type'''
-        return self._socket_constructor()
+        s = self._socket_constructor()
+        s.setblocking(0)
+        return s
 
     @property
     def broker(self):
@@ -54,13 +54,17 @@ class tsocket:
 
     def close(self):
         '''Close the socket. Can still retrieve data already receieved'''
-        self.context.remove_tsocket(self)
-        if self.listener:
-            self.listener.close()
-        self.listener = None
-        self._broker = None
-        self.subscribed = None
-        self.context = None
+        try:
+            self.context.remove_tsocket(self)
+        finally:
+            try:
+                if self.listener:
+                    self.listener.close()
+            finally:
+                self.listener = None
+                self._broker = None
+                self.subscribed = None
+                self.context = None
 
     def __del__(self):
         try: self.close()
@@ -99,10 +103,14 @@ def tmq_publish(tsocket, pattern):
         finally: s.close()
         tsocket.subscribed[pattern] = set()
 
-
 def tmq_send(tsocket, pattern, data, flags=0):
-    '''Publish data to subscribers of pattern.
-    Block until there are endpoints available from the server'''
+    tsocket.context.event_loop.run_until_complete(
+        tmq_send_async(tsocket, pattern, data, flags))
+
+
+@asyncio.coroutine
+def tmq_send_async(tsocket, pattern, data, flags=0):
+    '''Publish data to subscribers of pattern asyncronously'''
     if not isinstance(pattern, td.pattern):
         pattern = td.pattern(*pattern)
     if pattern not in tsocket.subscribed:
@@ -115,8 +123,8 @@ def tmq_send(tsocket, pattern, data, flags=0):
     for addr in endpoints:
         s = tsocket.socket()
         try:
-            s.connect(addr)
-            s.send(packet)
+            yield from tsocket.context.event_loop.sock_connect(s, addr)
+            yield from tsocket.context.event_loop.sock_sendall(s, packet)
         finally: s.close()
     return 1
 
@@ -156,5 +164,3 @@ def tmq_bind(tsocket, endpoint, backlog=5):
 def tmq_broker(tsocket, endpoint):
     '''Set the tsocket's broker'''
     tsocket._broker = endpoint
-
-

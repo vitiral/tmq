@@ -1,5 +1,6 @@
 import socket
 from unittest.mock import MagicMock
+import asyncio
 
 from tmq.context import Context
 
@@ -10,6 +11,9 @@ ports = range(9000, 9200)
 def mock_context():
     m = MagicMock(spec=Context)
     m.tsockets = []
+    m.event_loop = asyncio.get_event_loop()
+    m._process_client = Context._process_client
+    m._process_client_data = Context._process_client_data
     return m
 
 

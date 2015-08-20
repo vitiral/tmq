@@ -21,8 +21,10 @@ class TestSocket(TestCase):
         s.listen(5)
 
         # "publish" the data
-        context = mock_context()
+        context = Context(None)
+        context.event_loop.set_debug(True)
         ts = tmq_socket(context, 0)
+        tmq_bind(ts, (ip, ports[1]))
         ts.subscribed[pattern] = [addr]
         tmq_send(ts, pattern, expected)
 
@@ -45,7 +47,8 @@ class TestSocket(TestCase):
         mocked_socket = mock_socket()
 
         # create subscriber and subscribe to pattern
-        context = mock_context()
+        context = Context(None)
+        context.event_loop.set_debug(True)
         sub = tmq_socket(context, 0)
         tmq_bind(sub, addr)
         self.assertTrue(sub.listener)
@@ -66,15 +69,24 @@ class TestSocket(TestCase):
         self.assertTrue(mocked_socket.send.called)
 
         # "publish" the data
-        context = mock_context()
         pub = tmq_socket(context, 0)
         pub.subscribed[pattern] = [addr]
-        tmq_send(pub, pattern, expected)
+        tmq_bind(pub, (ip, ports[1]))
+        send_task = context.event_loop.create_task(
+            tmq_send_async(pub, pattern, expected))
+        context.event_loop.run_until_complete(send_task)
+        tasks = context._process_tsocket(sub)
 
-        Context.process_tsocket(sub)
+        for task in tasks:
+            context.event_loop.run_until_complete(task)
+        tasks.append(send_task)
+
         result = sub.published[pattern].pop()
 
         self.assertEqual(result, expected)
 
         close_all(pub, sub)
-
+        tasks.extend(context.failures)
+        for t in tasks:
+            e = t.exception()
+            if e: raise e
