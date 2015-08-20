@@ -1,91 +1,105 @@
+import asyncio
 from collections import deque
 
 import tmq.define as td
 
 class Context:
     '''The core handler for tsockets. Does the asyncio loop'''
-    def __init__(self, broker):
+    def __init__(self, broker, event_loop=Nonejk):
         self._broker = broker
         self.tsockets = []
-        self._remove = deque()
-        self._thread = Thread(target=self.thread_process)
-        self._thread.start()
+        if event_loop is None:
+            event_loop = asyncio.get_event_loop()
+        self._event_loop = event_loop
+        self._event_loop.create_task(self._loop())
 
-    def thread_process(self):
+    def remove_tsocket(self, tsocket):
+        self.tsockets.remove(self._remove.pop())
+
+    @asyncio.coroutine
+    def _loop(self):
         while True:
             start = time()
-            # process socket removals during thread execution
-            while self._remove:
-                self.tsockets.remove(self._remove.pop())
-
             for s in self.tsockets:
-                if s.context is None: continue  # socket was closed
-                self.process_tsocket(s)
+                assert s.context
+                self._process_tsocket(s)
 
             start = time() - start
             try:
-                sleep(td.TMQ_LOOP_TIME - start)
+                yield from asyncio.sleep(td.TMQ_LOOP_TIME - start)
             except ValueError:
                 pass
 
-    def remove_tsocket(self, tsocket):
-        self._remove.appendleft(tsocket)
-
-    @staticmethod
-    def process_tsocket(tsocket):
+    def _process_tsocket(self, tsocket):
         # accept and process connections until they are done
         if tsocket.role == td.TMQ_BROKER:
-            return Context._process_broker(tsocket)
+            self._process_broker(tsocket)
         else:
-            return Context._process_client(tsocket)
+            self._process_client(tsocket)
 
-    @staticmethod
-    def _process_client(tsocket):
+    def _process_client(self, tsocket):
         while True:
             try:
                 conn, addr = tsocket.listener.accept()
             except BlockingIOError:
-                return
+                return  # process done
+            self._event_loop.create_task(self._process_client_data(conn, addr))
 
-            data = conn.recv(td.TMQ_MSG_LEN)
-            data = td.tmq_unpack(data)
-            type, pattern, data = data
+    @asyncio.coroutine
+    def _process_client_data(self, conn, addr):
+        try:
+            # TODO: get all data in socket
+            data = yield from self._event_loop.sock_recv(conn, td.TMQ_MSG_LEN)
+            type, pattern, data = td.tmq_unpack(data)
             if type == td.TMQ_SUB:
+                # it is data that this socket subscribed to
                 tsocket.published[pattern].appendleft(data)
             elif type == (td.TMQ_PUB | td.TMQ_CACHE):
+                # it is new subscribers to publish to
                 if pattern not in tsocket.subscribed: raise KeyError
-                tsocket.subscribed[pattern] = tsocket.subscribed[pattern].\
-                    union(td.tmq_unpack_addresses(data))
+                tsocket.subscribed[pattern].update(
+                    td.tmq_unpack_addresses(data))
             elif type == td.TMQ_PUB | td.TMQ_CACHE | td.TMQ_REMOVE:
+                # it is subscribers to remove from publishing to
                 if pattern not in tsocket.subscribed: raise KeyError
-                tsocket.subscribed[pattern] = tsocket.subscribed[pattern].\
-                    difference(td.tmq_unpack_addresses(data))
+                subscribed = tsocket.subscribed[pattern]
+                for addr in td.tmq_unpack_addresses(data):
+                    try: subscribed.remove(addr)
+                    except KeyError: pass
             else: assert(0)
+        finally:
+            conn.close()
 
-    @staticmethod
-    def _process_broker(tsocket):
+    def _process_broker(self, tsocket):
         while True:
             # TODO: process things that need to be sent out
-
             try:
                 conn, addr = tsocket.listener.accept()
             except BlockingIOError:
                 return
+            self._event_loop.create_task(self._process_broker_data(conn, addr))
 
-            data = conn.recv(td.TMQ_MSG_LEN)
-            data = td.tmq_unpack(data)
-            type, pattern, data = data
+    @asyncio.coroutine
+    def _process_broker_data(self, conn, addr):
+        try:
+            # TODO: get all the data
+            data = yield from self._event_loop.sock_recv(conn, td.TMQ_MSG_LEN)
+            type, pattern, data = td.tmq_unpack(data)
             if type == td.TMQ_SUB | td.TMQ_CACHE | td.TMQ_BROKER:
-                Context._new_subscriber(tsocket, pattern, data)
+                self._event_loop.create_task(
+                    self._new_subscriber(tsocket, pattern, data))
             elif type == td.TMQ_PUB | td.TMQ_CACHE | td.TMQ_BROKER:
-                Context._new_publisher(tsocket, pattern, data)
+                self._event_loop.create_task(
+                    self._new_publisher(tsocket, pattern, data))
+        finally:
+            conn.close()
 
-    @staticmethod
-    def _new_publisher(tsocket, pattern, data):
+    @asyncio.coroutine
+    def _new_publisher(self, tsocket, pattern, data):
         if pattern not in tsocket.published:
             tsocket.published[pattern] = set()
-        pub_addr = td.tmq_unpack_addresses(data)[0]
-        tsocket.published[pattern].add(pub_addr)
+        addr = td.tmq_unpack_addresses(data)[0]
+        tsocket.published[pattern].add(addr)
 
         # send current subscribers of that token to the new publisher
         addresses = tsocket.subscribed[pattern]
@@ -93,16 +107,15 @@ class Context:
                              td.tmq_pack_addresses(addresses))
         s = tsocket.socket()
         try:    # TODO: handle failure
-            s.connect(pub_addr)
-            s.send(packet)
+            yield from self._event_loop.sock_connect(s, addr)
+            yield from self._event_loop.sock_send_all(s, packet)
         finally: s.close()
 
-    @staticmethod
-    def _new_subscriber(tsocket, pattern, data):
+    @asyncio.coroutine
+    def _new_subscriber(self, tsocket, pattern, data):
         if pattern not in tsocket.subscribed:
             tsocket.subscribed[pattern] = set()
         addr = td.tmq_unpack_addresses(data)[0]
-        tsocket.subscribed[pattern].add(addr)
 
         if pattern not in tsocket.published:
             return  # no publishers for that subscriber (yet)
@@ -111,9 +124,11 @@ class Context:
         # TODO: also send out for subsets of the token
         packet = td.tmq_pack(td.TMQ_PUB | td.TMQ_CACHE, pattern,
                              td.tmq_pack_address_t(*addr))
-        for pub_addr in tsocket.published[pattern]:
+        for addr in tsocket.published[pattern]:
             s = tsocket.socket()
             try:    # TODO: handle failure
-                s.connect(pub_addr)
-                s.send(packet)
+                yield from self._event_loop.sock_connect(s, addr)
+                yield from self._event_loop.sock_send_all(s, packet)
+            else:
+                tsocket.subscribed[pattern].add(addr)
             finally: s.close()
