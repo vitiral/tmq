@@ -5,7 +5,7 @@ import asyncio
 from tmq.context import Context
 
 ip = '127.0.0.1'
-ports = range(9000, 9200)
+ports = range(49300, 50400)
 
 
 class MockContext(Context):
@@ -28,7 +28,13 @@ def mock_context():
 
 
 def mock_socket():
-    return MagicMock(spec=socket.socket)
+    s = MagicMock(spec=socket.socket)
+    s.gettimeout.return_value = 0.0
+    s.connect.return_value = True
+    send = lambda x: len(x)
+    s.sendall.side_effect = send
+    s.send.side_effect = send
+    return s
 
 
 def close_all(*sockets):

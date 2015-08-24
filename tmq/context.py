@@ -47,7 +47,7 @@ class Context:
         tasks = []
         while True:
             try:
-                conn, addr = tsocket.listener.accept()
+                conn, addr = tsocket.accept()
             except BlockingIOError:
                 return tasks
             t = self.event_loop.create_task(
@@ -76,14 +76,15 @@ class Context:
             for addr in td.tmq_unpack_addresses(data):
                 try: subscribed.remove(addr)
                 except KeyError: pass
-        else: assert(0)
+        else:
+            assert 0
 
     def _process_broker(self, tsocket):
         tasks = []
         while True:
             # TODO: process things that need to be sent out
             try:
-                conn, addr = tsocket.listener.accept()
+                conn, addr = tsocket.accept()
             except BlockingIOError:
                 return tasks
             t = self.event_loop.create_task(
@@ -124,18 +125,16 @@ class Context:
 
     @asyncio.coroutine
     def _new_subscriber(self, pattern, data):
+        addr = td.tmq_unpack_addresses(data)[0]
         if pattern not in self.subscribers:
-            self.subscribers[pattern] = set()
+            self.subscribers[pattern] = {addr}
 
         if pattern not in self.publishers:
             return  # no publishers for that subscriber (yet)
 
-        # send out subscriber to all publishers of that token
-        # TODO: also send out for subsets of the token
-        addr = td.tmq_unpack_addresses(data)[0]
         packet = td.tmq_pack(td.TMQ_PUB | td.TMQ_CACHE, pattern,
                              td.tmq_pack_address_t(*addr))
-        for addr in self.subscribers[pattern]:
+        for addr in self.publishers[pattern]:
             s = tsocket.socket()
             try:    # TODO: handle failure
                 yield from self.event_loop.sock_connect(s, addr)

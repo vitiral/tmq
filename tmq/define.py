@@ -40,7 +40,6 @@ TMQ_                = 0x20      # RESERVED (usocket is always 0)
 
 # Role Types
 TMQ_CLIENT          = 0x00      # Client role  # TODO make reserved (usocket is always 0)
-#                     0x20      # TODO: make client role
 TMQ_BROKER          = 0x40      # Broker role
 TMQ_BRIDGE          = 0x80      # Bridge role
 

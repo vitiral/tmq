@@ -29,152 +29,173 @@ class tsocket:
         - Each of these functions can take the pointer given by
             tsocket.socket() and communicate with it
     '''
-    def __init__(self, context, role=td.TMQ_CLIENT,
+    def __init__(self, context, listener, broker=None, role=td.TMQ_CLIENT,
                  socket_constructor=socket.socket):
         if role not in {td.TMQ_CLIENT, td.TMQ_BROKER, td.TMQ_BRIDGE}:
             raise TypeError(role)
+        if broker is None and role != td.TMQ_BROKER:
+            raise TypeError("All roles must have a broker except broker")
         self.role = role
         self._socket_constructor = socket_constructor
         self.context = context
-        self.listener = None
+        self._listener = None
         self._broker = None
         self.published = {}  # published data
         self.subscribed = {}  # subscribers
         self.context.tsockets.append(self)
+        self.bind(listener)
+        if broker:
+            self.setbroker(broker)
 
     def socket(self):
-        '''create a new standard socket of the same type'''
+        '''create a new standard socket of the same type
+
+        Returns:
+            A standard nonblocking socket. NOT a tsocket!
+        '''
         s = self._socket_constructor()
         s.setblocking(0)
         return s
 
+    def accept(self):
+        '''accepts connection on the listener
+
+        Returns:
+            A standard nonblocking socket. NOT a tsocket!
+        '''
+        conn, addr = self._listener.accept()
+        conn.setblocking(0)
+        return conn, addr
+
+    def subscribe(self, pattern):
+        return self.context.event_loop.run_until_complete(
+            self.subscribe_async(pattern))
+
+    @asyncio.coroutine
+    def subscribe_async(self, pattern):
+        if pattern in self.published:
+            raise KeyError("Subscribing to {} twice".format(pattern))
+        eloop = self.context.event_loop
+        s = self.socket()
+        try:
+            yield from eloop.sock_connect(s, self.broker)
+            data = td.tmq_pack(
+                td.TMQ_SUB | td.TMQ_CACHE | td.TMQ_BROKER,
+                pattern,
+                td.tmq_pack_address_t(*self.getsockname()))
+            yield from eloop.sock_sendall(s, data)
+        finally: s.close()
+        self.published[pattern] = deque()
+
+    def publish(self, pattern):
+        return self.context.event_loop.run_until_complete(
+            self.publish_async(pattern))
+
+    @asyncio.coroutine
+    def publish_async(self, pattern):
+        '''Inform the broker we are a publisher and ask for subscribers'''
+        if not isinstance(pattern, td.pattern):
+            pattern = td.pattern(*pattern)
+        if pattern not in self.subscribed:
+            # inform broker we are a publisher
+            eloop = self.context.event_loop
+            s = self.socket()
+            try:
+                yield from eloop.sock_connect(s, self.broker)
+                yield from eloop.sock_sendall(s, td.tmq_pack(
+                    td.TMQ_PUB | td.TMQ_CACHE | td.TMQ_BROKER, pattern,
+                    td.tmq_pack_address_t(*self.getsockname())))
+            finally: s.close()
+            self.subscribed[pattern] = set()
+
+    def getsockname(self):
+        return self._listener.getsockname()
+
+    def bind(self, endpoint, backlog=5):
+        '''Bind the tsocket to listen/subscribe on a specific endpoint.
+
+        Note: this is done in init. Use this to change the value'''
+        if self._listener:
+            try:
+                self._listener.close()
+                raise NotImplementedError("TODO: cannot rebind socket")
+            finally:
+                self._listener = None
+
+        s = self.socket()
+        try:
+            s.setblocking(0)
+            s.bind(endpoint)
+            s.listen(backlog)
+            self._listener = s
+        except Exception:
+            s.close()
+            raise
+
     @property
     def broker(self):
+        '''Return the broker address the socket is using'''
         return self._broker
 
+    def setbroker(self, endpoint):
+        '''Set the tsocket's broker
+
+        Note: this is automatically done in init, use this to change the broker
+        '''
+        self._broker = endpoint
+
     def close(self):
-        '''Close the socket. Can still retrieve data already receieved'''
+        '''Close the tsocket. Can still retrieve data already received'''
         try:
             self.context.remove_tsocket(self)
         finally:
             try:
-                if self.listener:
-                    self.listener.close()
+                if self._listener:
+                    self._listener.close()
             finally:
-                self.listener = None
+                self._listener = None
                 self._broker = None
                 self.subscribed = None
                 self.context = None
+
+    def send(self, pattern, data, flags=0):
+        self.context.event_loop.run_until_complete(
+            self.send_async(pattern, data, flags))
+
+    @asyncio.coroutine
+    def send_async(self, pattern, data, flags=0):
+        '''Publish data to subscribers of pattern asyncronously'''
+        if not isinstance(pattern, td.pattern):
+            pattern = td.pattern(*pattern)
+        if pattern not in self.subscribed:
+            raise ValueError("Pattern not marked as a publish pattern: {}".format(
+                pattern))
+        endpoints = self.subscribed[pattern]
+        if not endpoints:
+            return 1
+        packet = td.tmq_pack(td.TMQ_SUB, pattern, data)
+        for addr in endpoints:
+            s = self.socket()
+            try:
+                yield from self.context.event_loop.sock_connect(s, addr)
+                # TODO: this should be return
+                yield from self.context.event_loop.sock_sendall(s, packet)
+            finally: s.close()
+
+    def recv(self, pattern):
+        '''Non blocking receive call from pattern
+
+        Returns:
+            bytes: if there is data
+            None: if there is no data
+        '''
+        queue = self.published[pattern]
+        if queue:
+            return queue.pop()
+        else:
+            return None
 
     def __del__(self):
         try: self.close()
         except Exception as E: pass
 
-
-def tmq_socket(context, role=td.TMQ_CLIENT, socket_constructor=socket.socket):
-    return tsocket(context, role, socket_constructor)
-
-
-def tmq_subscribe(tsocket, pattern):
-    return tsocket.context.event_loop.run_until_complete(
-        tmq_subscribe_async(tsocket, pattern))
-
-@asyncio.coroutine
-def tmq_subscribe_async(tsocket, pattern):
-    if pattern in tsocket.published:
-        raise ValueError("Subscribing to {} twice".format(pattern))
-    eloop = tsocket.context.event_loop
-    s = tsocket.socket()
-    try:
-        yield from eloop.sock_connect(s, tsocket.broker)
-        yield from eloop.sock_sendall(s, td.tmq_pack(
-            td.TMQ_SUB | td.TMQ_CACHE | td.TMQ_BROKER, pattern,
-            td.tmq_pack_address_t(*tsocket.listener.getsockname())))
-    finally: s.close()
-    tsocket.published[pattern] = deque()
-
-
-def tmq_publish(tsocket, pattern):
-    return tsocket.context.event_loop.run_until_complete(
-        tmq_publish_async(tsocket, pattern))
-
-
-@asyncio.coroutine
-def tmq_publish_async(tsocket, pattern):
-    '''Inform the broker we are a publisher and ask for subscribers'''
-    if not isinstance(pattern, td.pattern):
-        pattern = td.pattern(*pattern)
-    if pattern not in tsocket.subscribed:
-        # inform broker we are a publisher
-        eloop = tsocket.context.event_loop
-        s = tsocket.socket()
-        try:
-            yield from eloop.sock_connect(s, tsocket.broker)
-            yield from eloop.sock_sendall(s, td.tmq_pack(
-                td.TMQ_PUB | td.TMQ_CACHE | td.TMQ_BROKER, pattern,
-                td.tmq_pack_address_t(*tsocket.listener.getsockname())))
-        finally: s.close()
-        tsocket.subscribed[pattern] = set()
-
-
-def tmq_send(tsocket, pattern, data, flags=0):
-    tsocket.context.event_loop.run_until_complete(
-        tmq_send_async(tsocket, pattern, data, flags))
-
-
-@asyncio.coroutine
-def tmq_send_async(tsocket, pattern, data, flags=0):
-    '''Publish data to subscribers of pattern asyncronously'''
-    if not isinstance(pattern, td.pattern):
-        pattern = td.pattern(*pattern)
-    if pattern not in tsocket.subscribed:
-        raise ValueError("Pattern not marked as a publish pattern: {}".format(
-            pattern))
-    endpoints = tsocket.subscribed[pattern]
-    if not endpoints:
-        return 1
-    packet = td.tmq_pack(td.TMQ_SUB, pattern, data)
-    for addr in endpoints:
-        s = tsocket.socket()
-        try:
-            yield from tsocket.context.event_loop.sock_connect(s, addr)
-            yield from tsocket.context.event_loop.sock_sendall(s, packet)
-        finally: s.close()
-    return 1
-
-
-def tmq_recv(tsocket, pattern):
-    '''Non blocking receive call from pattern
-
-    Returns:
-        bytes: if there is data, returns a byte string of the data
-
-        If there is no data, None is returned
-    '''
-    queue = tsocket.published[pattern]
-    if queue:
-        return queue.pop()
-    else:
-        return None
-
-
-def tmq_bind(tsocket, endpoint, backlog=5):
-    '''Bind the tsocket to listen/subscribe on a specific endpoint'''
-    if tsocket.listener:
-        tsocket.listener.close()
-        tsocket.listener = None
-
-    s = tsocket.socket()
-    try:
-        s.settimeout(0)
-        s.bind(endpoint)
-        s.listen(backlog)
-        tsocket.listener = s
-    except Exception:
-        s.close()
-        raise
-
-
-def tmq_broker(tsocket, endpoint):
-    '''Set the tsocket's broker'''
-    tsocket._broker = endpoint

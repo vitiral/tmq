@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 from operator import attrgetter
 
 from tmq import define as td
-from tmq.tsocket import *
+from tmq.tsocket import tsocket
 from tmq.context import Context
 
 from .tools import *
@@ -22,10 +22,9 @@ class TestSocket(TestCase):
 
         # "publish" the data
         context = MockContext(None)
-        ts = tmq_socket(context, 0)
-        tmq_bind(ts, (ip, ports[1]))
+        ts = tsocket(context, (ip, ports[1]), '0.0.0.0')
         ts.subscribed[pattern] = [addr]
-        tmq_send(ts, pattern, expected)
+        ts.send(pattern, expected)
 
         # make sure it is correct for the subscriber
         conn, addr = s.accept()
@@ -47,31 +46,29 @@ class TestSocket(TestCase):
 
         # create subscriber and subscribe to pattern
         context = MockContext(None)
-        sub = tmq_socket(context, 0)
-        tmq_bind(sub, addr)
-        self.assertTrue(sub.listener)
+        sub = tsocket(context, addr, None)
+        self.assertTrue(sub._listener)
 
         # just make sure the listener socket is functioning
-        s2 = socket.socket()
         s = socket.socket()
         s.connect(addr)
         s.send(b'hi there')
-        conn, _ = sub.listener.accept()
+        conn, _ = sub.accept()
         self.assertEqual(conn.recv(256), b'hi there')
         close_all(s, conn)
         del s, conn, _
 
-        sub.socket = MagicMock(return_value = mocked_socket)
-        tmq_subscribe(sub, pattern)
+        # "subscribe" to the data
+        sub.socket = MagicMock(return_value=mocked_socket)
+        sub.subscribe(pattern)
         mocked_socket.connect.assert_called_with(None)
         self.assertTrue(mocked_socket.send.called)
 
         # "publish" the data
-        pub = tmq_socket(context, 0)
+        pub = tsocket(context, (ip, ports[1]), None)
         pub.subscribed[pattern] = [addr]
-        tmq_bind(pub, (ip, ports[1]))
         send_task = context.event_loop.create_task(
-            tmq_send_async(pub, pattern, expected))
+            pub.send_async(pattern, expected))
         context.event_loop.run_until_complete(send_task)
         tasks = context._process_tsocket(sub)
 
