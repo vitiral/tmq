@@ -23,7 +23,6 @@ class TestBroker(TestCase):
 
         broker = socket.socket()
         broker.bind(addr_broker)
-        import ipdb; ipdb.set_trace()
         broker.listen(5)
 
         context = MockContext(None)
