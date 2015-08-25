@@ -26,21 +26,23 @@ class TestBroker(TestCase):
         broker.listen(5)
 
         context = MockContext(None)
+        eloop = context.event_loop
         pub = tsocket(context, addr_pub, addr_broker)
         sub = tsocket(context, addr_sub, addr_broker)
 
-        sub.subscribe(sub, pattern)
+        sub.subscribe(pattern)
         # receive the request to be added to subscribers
         type, p, data = td.tmq_unpack(broker.accept()[0].recv(2048))
         self.assertEqual(p, pattern)
         addr, stype = td.tmq_unpack_address_t(data)
         self.assertEqual(addr, addr_sub)
 
-        sub.publish(pattern)
+        pub.publish(pattern)
         # receive the request to be added to publishers
         type, p, data = td.tmq_unpack(broker.accept()[0].recv(2048))
         self.assertEqual(p, pattern)
         addr, stype = td.tmq_unpack_address_t(data)
+        assert addr == addr_pub
         self.assertEqual(addr, addr_pub)
 
         # send back subscriber addresses to publisher
@@ -52,13 +54,12 @@ class TestBroker(TestCase):
         s.close()
 
         # receive addresses
-        eloop = context.event_loop
-        run_tasks(context._process_tsocket(pub))
+        run_tasks(eloop, context._process_tsocket(pub))
         self.assertSetEqual(pub.subscribed[pattern], set((addr_sub,)))
 
         # now send some data, no more broker necessary!
         pub.send(pattern, data)
-        run_tasks(context._process_tsocket(sub))
+        run_tasks(eloop, context._process_tsocket(sub))
         result = sub.recv(pattern)
 
         self.assertEqual(data, result)
@@ -84,17 +85,18 @@ class TestBroker(TestCase):
         # subscribe
         sub.subscribe(pattern)
         run_tasks(eloop, context._process_tsocket(broker))
-        run_tasks(eloop, context._process_tsocket(pub))
-        # the context records that there is a subscriber
         assert context.subscribers[pattern] == set((addr_sub,))
-        return
+        # run_tasks(eloop, context._process_tsocket(pub))
 
         # publish
         pub.publish(pattern)
         run_tasks(eloop, context._process_tsocket(broker))
-        self.assertEqual(sub.published[pattern], set((addr_pub,)))
+        assert pub.subscribed[pattern] == set()
+        assert context.publishers[pattern] == set((addr_pub,))
         run_tasks(eloop, context._process_tsocket(broker))
-        self.assertEqual(pub.subscribed[pattern], set((addr_sub,)))
+        assert pub.subscribed[pattern] == set((addr_sub,))
+
+        close_all(pub, sub, broker)
         return
 
         # publish data
@@ -103,5 +105,3 @@ class TestBroker(TestCase):
         result = tmq_recv(sub, pattern)
         self.assertEqual(data, result)
 
-        close_all(pub, sub, broker)
-        return

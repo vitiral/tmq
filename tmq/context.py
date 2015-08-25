@@ -19,8 +19,8 @@ class Context:
         task = self.event_loop.create_task(self._loop())
         self.add_done_callback(task)
 
-    def remove_tsocket(self, tsocket):
-        self.tsockets.remove(tsocket)
+    def remove_tsocket(self, tsock):
+        self.tsockets.remove(tsock)
 
     @asyncio.coroutine
     def _loop(self):
@@ -36,26 +36,26 @@ class Context:
             except ValueError:
                 pass
 
-    def _process_tsocket(self, tsocket):
+    def _process_tsocket(self, tsock):
         # accept and process connections until they are done
-        if tsocket.role == td.TMQ_BROKER:
-            return self._process_broker(tsocket)
+        if tsock.role == td.TMQ_BROKER:
+            return self._process_broker(tsock)
         else:
-            return self._process_client(tsocket)
+            return self._process_client(tsock)
 
-    def _process_client(self, tsocket):
+    def _process_client(self, tsock):
         tasks = []
         while True:
             try:
-                conn, addr = tsocket.accept()
+                conn, addr = tsock.accept()
             except BlockingIOError:
                 return tasks
             t = self.event_loop.create_task(
-                self._process_client_data(tsocket, conn, addr))
+                self._process_client_data(tsock, conn, addr))
             tasks.append(t)
 
     @asyncio.coroutine
-    def _process_client_data(self, tsocket, conn, addr):
+    def _process_client_data(self, tsock, conn, addr):
         try:
             data = yield from get_data(self.event_loop, conn)
         finally:
@@ -63,51 +63,53 @@ class Context:
         type, pattern, data = td.tmq_unpack(data)
         if type == td.TMQ_SUB:
             # it is data that this socket subscribed to
-            tsocket.published[pattern].appendleft(data)
+            tsock.published[pattern].appendleft(data)
         elif type == (td.TMQ_PUB | td.TMQ_CACHE):
             # it is new subscribers to publish to
-            if pattern not in tsocket.subscribed: raise KeyError
-            tsocket.subscribed[pattern].update(
+            if pattern not in tsock.subscribed: raise KeyError
+            tsock.subscribed[pattern].update(
                 td.tmq_unpack_addresses(data))
         elif type == td.TMQ_PUB | td.TMQ_CACHE | td.TMQ_REMOVE:
             # it is subscribers to remove from publishing to
-            if pattern not in tsocket.subscribed: raise KeyError
-            subscribed = tsocket.subscribed[pattern]
+            if pattern not in tsock.subscribed: raise KeyError
+            subscribed = tsock.subscribed[pattern]
             for addr in td.tmq_unpack_addresses(data):
                 try: subscribed.remove(addr)
                 except KeyError: pass
         else:
             assert 0
 
-    def _process_broker(self, tsocket):
+    def _process_broker(self, tsock):
         tasks = []
         while True:
             # TODO: process things that need to be sent out
             try:
-                conn, addr = tsocket.accept()
+                conn, addr = tsock.accept()
             except BlockingIOError:
                 return tasks
             t = self.event_loop.create_task(
-                self._process_broker_data(conn, addr))
+                self._process_broker_data(tsock, conn, addr))
             tasks.append(t)
 
     @asyncio.coroutine
-    def _process_broker_data(self, conn, addr):
+    def _process_broker_data(self, tsock, conn, addr):
         try:
             data = yield from get_data(self.event_loop, conn)
         finally:
             conn.close()
         type, pattern, data = td.tmq_unpack(data)
         if type == td.TMQ_SUB | td.TMQ_CACHE | td.TMQ_BROKER:
-            t = self.event_loop.create_task(self._new_subscriber(pattern, data))
+            t = self.event_loop.create_task(
+                self._subscriber(tsock, pattern, data))
         elif type == td.TMQ_PUB | td.TMQ_CACHE | td.TMQ_BROKER:
-            t = self.event_loop.create_task(self._new_publisher(pattern, data))
+            t = self.event_loop.create_task(
+                self._publisher(tsock, pattern, data))
         else:
             raise TypeError
         self.add_done_callback(t)
 
     @asyncio.coroutine
-    def _new_publisher(self, pattern, data):
+    def _publisher(self, tsock, pattern, data):
         if pattern not in self.publishers:
             self.publishers[pattern] = set()
         addr = td.tmq_unpack_addresses(data)[0]
@@ -117,14 +119,15 @@ class Context:
         addresses = self.subscribers[pattern]
         packet = td.tmq_pack(td.TMQ_PUB | td.TMQ_CACHE, pattern,
                              td.tmq_pack_addresses(addresses))
-        s = self._broker.socket()
+        s = tsock.socket()
+        import ipdb; ipdb.set_trace()
         try:    # TODO: handle failure
             yield from self.event_loop.sock_connect(s, addr)
             yield from self.event_loop.sock_send_all(s, packet)
         finally: s.close()
 
     @asyncio.coroutine
-    def _new_subscriber(self, pattern, data):
+    def _subscriber(self, tsock, pattern, data):
         addr = td.tmq_unpack_addresses(data)[0]
         if pattern not in self.subscribers:
             self.subscribers[pattern] = {addr}
@@ -135,7 +138,7 @@ class Context:
         packet = td.tmq_pack(td.TMQ_PUB | td.TMQ_CACHE, pattern,
                              td.tmq_pack_address_t(*addr))
         for addr in self.publishers[pattern]:
-            s = tsocket.socket()
+            s = tsock.socket()
             try:    # TODO: handle failure
                 yield from self.event_loop.sock_connect(s, addr)
                 yield from self.event_loop.sock_send_all(s, packet)

@@ -5,7 +5,7 @@ import asyncio
 from tmq.context import Context
 
 ip = '127.0.0.1'
-ports = range(49300, 50400)
+ports = range(5500, 6000)
 
 
 class MockContext(Context):
